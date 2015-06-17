@@ -50,6 +50,8 @@
 #include <rosgraph_msgs/Clock.h>
 
 #include <std_srvs/Empty.h>
+#include <stage_ros/Stall.h>
+
 
 #include "tf/transform_broadcaster.h"
 
@@ -61,6 +63,7 @@
 #define BASE_SCAN "base_scan"
 #define BASE_POSE_GROUND_TRUTH "base_pose_ground_truth"
 #define CMD_VEL "cmd_vel"
+#define STALL "stall"
 
 // Our node
 class StageNode
@@ -88,6 +91,7 @@ private:
 
         //ros publishers
         ros::Publisher odom_pub; //one odom
+        ros::Publisher stall_pub; //one stall
         ros::Publisher ground_truth_pub; //one ground truth
 
         std::vector<ros::Publisher> image_pubs; //multiple images
@@ -352,6 +356,7 @@ StageNode::SubscribeModels()
         ROS_INFO("Found %lu laser devices and %lu cameras in robot %lu", new_robot->lasermodels.size(), new_robot->cameramodels.size(), r);
 
         new_robot->odom_pub = n_.advertise<nav_msgs::Odometry>(mapName(ODOM, r, static_cast<Stg::Model*>(new_robot->positionmodel)), 10);
+	    new_robot->stall_pub = n_.advertise<stage_ros::Stall>(mapName(STALL, r, static_cast<Stg::Model*>(new_robot->positionmodel)), 10);
         new_robot->ground_truth_pub = n_.advertise<nav_msgs::Odometry>(mapName(BASE_POSE_GROUND_TRUTH, r, static_cast<Stg::Model*>(new_robot->positionmodel)), 10);
         new_robot->cmdvel_sub = n_.subscribe<geometry_msgs::Twist>(mapName(CMD_VEL, r, static_cast<Stg::Model*>(new_robot->positionmodel)), 10, boost::bind(&StageNode::cmdvelReceived, this, r, _1));
 
@@ -510,6 +515,12 @@ StageNode::WorldCallback()
         odom_msg.header.stamp = sim_time;
 
         robotmodel->odom_pub.publish(odom_msg);
+
+        stage_ros::Stall stall_msg;
+        stall_msg.header.frame_id = mapName("base_footprint", r, static_cast<Stg::Model*>(robotmodel->positionmodel));
+        stall_msg.header.stamp = sim_time;
+        stall_msg.stall = robotmodel->positionmodel->Stalled();
+        robotmodel->stall_pub.publish(stall_msg);
 
         // broadcast odometry transform
         tf::Quaternion odomQ;

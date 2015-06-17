@@ -4,6 +4,8 @@ project(stage_ros)
 find_package(catkin REQUIRED
   COMPONENTS
     geometry_msgs
+    message_generation
+    message_runtime
     nav_msgs
     roscpp
     sensor_msgs
@@ -37,6 +39,16 @@ include_directories(
   ${FLTK_INCLUDE_DIRS}
   ${Stage_INCLUDE_DIRS}
 )
+
+
+add_message_files(
+  FILES
+  Stall.msg
+  )
+
+generate_messages(
+  DEPENDENCIES std_msgs
+  )
 
 catkin_package()
 
