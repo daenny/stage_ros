@@ -81,6 +81,9 @@ private:
     std::vector<Stg::ModelRanger *> lasermodels;
     std::vector<Stg::ModelPosition *> positionmodels;
 
+    std::vector<Stg::Model *> genericmodels; //environment objects
+    std::vector<ros::Publisher> generic_ground_truth_pubs; //one ground truth per object
+
     //a structure representing a robot inthe simulator
     struct StageRobot
     {
@@ -234,14 +237,18 @@ StageNode::ghfunc(Stg::Model* mod, StageNode* node)
 {
     if (dynamic_cast<Stg::ModelRanger *>(mod))
         node->lasermodels.push_back(dynamic_cast<Stg::ModelRanger *>(mod));
-    if (dynamic_cast<Stg::ModelPosition *>(mod)) {
+    else if (dynamic_cast<Stg::ModelPosition *>(mod)) {
       Stg::ModelPosition * p = dynamic_cast<Stg::ModelPosition *>(mod);
       // remember initial poses
       node->positionmodels.push_back(p);
       node->initial_poses.push_back(p->GetGlobalPose());
     }
-    if (dynamic_cast<Stg::ModelCamera *>(mod))
+    else if (dynamic_cast<Stg::ModelCamera *>(mod))
         node->cameramodels.push_back(dynamic_cast<Stg::ModelCamera *>(mod));
+    else {
+        node->genericmodels.push_back(mod);
+    }
+
 }
 
 
@@ -387,6 +394,23 @@ StageNode::SubscribeModels()
 
         this->robotmodels_.push_back(new_robot);
     }
+
+    for (size_t r = 0; r < this->genericmodels.size(); r++) {
+        this->genericmodels[r]->Subscribe();
+        static char buf[100];
+        std::size_t found = std::string(((Stg::Ancestor *)  this->genericmodels[r])->Token()).find(":");
+
+        if ((found==std::string::npos))
+        {
+            snprintf(buf, sizeof(buf), "/%s/%s", ((Stg::Ancestor *)  this->genericmodels[r])->Token(), BASE_POSE_GROUND_TRUTH);
+        }
+        else
+            snprintf(buf, sizeof(buf), "/obst_%u/%s", (unsigned int)r, BASE_POSE_GROUND_TRUTH);
+        this->generic_ground_truth_pubs.push_back(n_.advertise<nav_msgs::Odometry>(buf, 10));
+    }
+
+
+
     clock_pub_ = n_.advertise<rosgraph_msgs::Clock>("/clock", 10);
 
     // advertising reset service
@@ -734,6 +758,28 @@ StageNode::WorldCallback()
             }
 
         }
+    }
+    for (size_t r = 0; r < this->genericmodels.size(); r++) {
+        Stg::Pose gpose = genericmodels[r]->GetGlobalPose();
+        tf::Quaternion q_gpose;
+        q_gpose.setRPY(0.0, 0.0, gpose.a);
+        tf::Transform gt(q_gpose, tf::Point(gpose.x, gpose.y, 0.0));
+
+        nav_msgs::Odometry ground_truth_msg;
+        ground_truth_msg.pose.pose.position.x     = gt.getOrigin().x();
+        ground_truth_msg.pose.pose.position.y     = gt.getOrigin().y();
+        ground_truth_msg.pose.pose.position.z     = gt.getOrigin().z();
+        ground_truth_msg.pose.pose.orientation.x  = gt.getRotation().x();
+        ground_truth_msg.pose.pose.orientation.y  = gt.getRotation().y();
+        ground_truth_msg.pose.pose.orientation.z  = gt.getRotation().z();
+        ground_truth_msg.pose.pose.orientation.w  = gt.getRotation().w();
+
+
+        ground_truth_msg.header.frame_id = "/world";
+        ground_truth_msg.header.stamp = sim_time;
+
+        this->generic_ground_truth_pubs[r].publish(ground_truth_msg);
+
     }
 
     this->base_last_globalpos_time = this->sim_time;
