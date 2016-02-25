@@ -49,6 +49,8 @@
 #include <geometry_msgs/Twist.h>
 #include <rosgraph_msgs/Clock.h>
 
+
+#include <geometry_msgs/Pose2D.h>
 #include <std_srvs/Empty.h>
 #include <stage_ros/Stall.h>
 
@@ -60,6 +62,7 @@
 #define DEPTH "depth"
 #define CAMERA_INFO "camera_info"
 #define ODOM "odom"
+#define POSE "set_pose"
 #define BASE_SCAN "base_scan"
 #define BASE_POSE_GROUND_TRUTH "base_pose_ground_truth"
 #define CMD_VEL "cmd_vel"
@@ -82,7 +85,8 @@ private:
     std::vector<Stg::ModelPosition *> positionmodels;
 
     std::vector<Stg::Model *> genericmodels; //environment objects
-    std::vector<ros::Publisher> generic_ground_truth_pubs; //one ground truth per object
+    std::vector<ros::Publisher> generic_ground_truth_pubs; //one ground truth per object 
+    std::vector<ros::Subscriber> generic_pose2d_subs; //one pose sub per object
 
     //a structure representing a robot inthe simulator
     struct StageRobot
@@ -103,6 +107,7 @@ private:
         std::vector<ros::Publisher> laser_pubs; //multiple lasers
 
         ros::Subscriber cmdvel_sub; //one cmd_vel subscriber
+        ros::Subscriber pose2d_sub; //one set_pose subscriber
     };
 
     std::vector<StageRobot const *> robotmodels_;
@@ -167,6 +172,9 @@ public:
 
     // Message callback for a MsgBaseVel message, which set velocities.
     void cmdvelReceived(int idx, const boost::shared_ptr<geometry_msgs::Twist const>& msg);
+
+  void setPose2dReceived(int idx, const boost::shared_ptr<geometry_msgs::Pose2D const>& msg);
+  void genPose2dReceived(int idx, const boost::shared_ptr<geometry_msgs::Pose2D const>& msg);
 
     // Service callback for soft reset
     bool cb_reset_srv(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
@@ -265,6 +273,29 @@ StageNode::cb_reset_srv(std_srvs::Empty::Request& request, std_srvs::Empty::Resp
   return true;
 }
 
+void
+StageNode::setPose2dReceived(int idx, const boost::shared_ptr<geometry_msgs::Pose2D const>& msg)
+{
+  boost::mutex::scoped_lock lock(msg_lock);
+  Stg::Pose pose;
+  pose.x = msg->x;
+  pose.y = msg->y;
+  pose.z = 0;
+  pose.a = msg->theta;
+  this->positionmodels[idx]->SetPose(pose);
+}
+
+void
+StageNode::genPose2dReceived(int idx, const boost::shared_ptr<geometry_msgs::Pose2D const>& msg)
+{
+  boost::mutex::scoped_lock lock(msg_lock);
+  Stg::Pose pose;
+  pose.x = msg->x;
+  pose.y = msg->y;
+  pose.z = 0;
+  pose.a = msg->theta;
+  this->genericmodels[idx]->SetPose(pose);
+}
 
 
 void
@@ -367,6 +398,8 @@ StageNode::SubscribeModels()
         new_robot->ground_truth_pub = n_.advertise<nav_msgs::Odometry>(mapName(BASE_POSE_GROUND_TRUTH, r, static_cast<Stg::Model*>(new_robot->positionmodel)), 10);
         new_robot->cmdvel_sub = n_.subscribe<geometry_msgs::Twist>(mapName(CMD_VEL, r, static_cast<Stg::Model*>(new_robot->positionmodel)), 10, boost::bind(&StageNode::cmdvelReceived, this, r, _1));
 
+        new_robot->pose2d_sub = n_.subscribe<geometry_msgs::Pose2D>(mapName(POSE, r, static_cast<Stg::Model*>(new_robot->positionmodel)), 10, boost::bind(&StageNode::setPose2dReceived, this, r, _1));
+
         for (size_t s = 0;  s < new_robot->lasermodels.size(); ++s)
         {
             if (new_robot->lasermodels.size() == 1)
@@ -398,15 +431,20 @@ StageNode::SubscribeModels()
     for (size_t r = 0; r < this->genericmodels.size(); r++) {
         this->genericmodels[r]->Subscribe();
         static char buf[100];
+        static char buf2[100];
         std::size_t found = std::string(((Stg::Ancestor *)  this->genericmodels[r])->Token()).find(":");
 
         if ((found==std::string::npos))
         {
-            snprintf(buf, sizeof(buf), "/%s/%s", ((Stg::Ancestor *)  this->genericmodels[r])->Token(), BASE_POSE_GROUND_TRUTH);
+          snprintf(buf, sizeof(buf), "/%s/%s", ((Stg::Ancestor *)  this->genericmodels[r])->Token(), BASE_POSE_GROUND_TRUTH);
+          snprintf(buf2, sizeof(buf2), "/%s/%s", ((Stg::Ancestor *)  this->genericmodels[r])->Token(), POSE);
         }
-        else
-            snprintf(buf, sizeof(buf), "/obst_%u/%s", (unsigned int)r, BASE_POSE_GROUND_TRUTH);
+        else {
+          snprintf(buf, sizeof(buf), "/obst_%u/%s", (unsigned int)r, BASE_POSE_GROUND_TRUTH);
+          snprintf(buf2, sizeof(buf2), "/obst_%u/%s", (unsigned int)r, POSE);
+        }
         this->generic_ground_truth_pubs.push_back(n_.advertise<nav_msgs::Odometry>(buf, 10));
+        this->generic_pose2d_subs.push_back(n_.subscribe<geometry_msgs::Pose2D>(buf2, 10, boost::bind(&StageNode::genPose2dReceived, this, r, _1)));
     }
 
 
